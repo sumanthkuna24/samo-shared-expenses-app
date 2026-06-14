@@ -432,12 +432,13 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
                     </div>
                     <div style={styles.memberBalance}>
                       {isOwed ? (
-                        <span style={styles.greenText}>owes ₹{Math.round(member.net).toLocaleString()}</span>
+                        <span style={styles.greenText}>is owed ₹{Math.round(member.net).toLocaleString()}</span>
                       ) : owesMoney ? (
                         <span style={styles.redText}>owes ₹{Math.round(Math.abs(member.net)).toLocaleString()}</span>
                       ) : (
                         <span style={styles.dimText}>settled up</span>
                       )}
+
                     </div>
                   </div>
                 );
