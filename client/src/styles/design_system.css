@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-gradient: #f5f5f7;
+  --panel-bg: #ffffff;
+  --panel-border: #e5e7eb;
+  --panel-border-hover: #d1d5db;
+  
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --accent-teal: #0d9488;
+  --accent-magenta: #db2777;
+  
+  --text-main: #1d1d1f;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  
+  --creditor-green: #16a34a;
+  --debtor-red: #dc2626;
+  
+  --glow-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  --glow-shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Outfit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: var(--bg-gradient);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f5f5f7;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Glassmorphism Panel Class (Re-styled as clean cards) */
+.glass-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease;
+}
+
+.glass-card:hover {
+  border-color: var(--panel-border-hover);
+  box-shadow: var(--glow-shadow);
+}
+
+/* Interactive Input / Form Fields */
+.form-input {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px 14px;
+  outline: none;
+  font-size: 0.95rem;
+  transition: all 0.15s ease;
+}
+
+.form-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+/* Buttons styling */
+.btn-primary {
+  background: var(--primary);
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(79, 70, 229, 0.15);
+  transition: all 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(79, 70, 229, 0.25);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background: #f3f4f6;
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
