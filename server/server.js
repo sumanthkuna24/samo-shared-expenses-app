@@ -278,7 +278,83 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
+// User Registration Route (Sign Up)
+app.post('/api/auth/register', (req, res) => {
+  const { username, password, roommate_name } = req.body;
+
+  if (!username || !password || !roommate_name) {
+    return res.status(400).json({ error: 'Username, password, and roommate name are required.' });
+  }
+
+  const cleanUsername = username.toLowerCase().trim();
+  const cleanRoommateName = roommate_name.trim();
+
+  db.serialize(() => {
+    // 1. Check if user already exists
+    db.get('SELECT id FROM users WHERE username = ?', [cleanUsername], (err, userRow) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (userRow) {
+        return res.status(400).json({ error: 'Username is already taken.' });
+      }
+
+      // 2. Insert or check roommate
+      db.get('SELECT id FROM roommates WHERE name = ?', [cleanRoommateName], (err, roommateRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const createAccount = (roommateId) => {
+          const salt = bcrypt.genSaltSync(10);
+          const hash = bcrypt.hashSync(password, salt);
+
+          db.run(`
+            INSERT INTO users (username, password_hash, roommate_id)
+            VALUES (?, ?, ?)
+          `, [cleanUsername, hash, roommateId], function(err) {
+            if (err) {
+              return res.status(500).json({ error: 'Failed to create user account: ' + err.message });
+            }
+            res.json({
+              message: 'Account created successfully.',
+              user: {
+                id: this.lastID,
+                username: cleanUsername,
+                roommate_id: roommateId,
+                roommate_name: cleanRoommateName
+              }
+            });
+          });
+        };
+
+        if (roommateRow) {
+          // Roommate already exists, check if they already have an account linked
+          db.get('SELECT id FROM users WHERE roommate_id = ?', [roommateRow.id], (err, existingUser) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (existingUser) {
+              return res.status(400).json({ error: `Roommate "${cleanRoommateName}" is already linked to another login account.` });
+            }
+            createAccount(roommateRow.id);
+          });
+        } else {
+          // Roommate doesn't exist, create new roommate and their membership
+          db.run('INSERT INTO roommates (name) VALUES (?)', [cleanRoommateName], function(err) {
+            if (err) return res.status(500).json({ error: 'Failed to register roommate: ' + err.message });
+            const newRoommateId = this.lastID;
+
+            db.run(`
+              INSERT INTO group_memberships (group_id, roommate_id, joined_at)
+              VALUES (1, ?, ?)
+            `, [newRoommateId, new Date().toISOString().split('T')[0]], (err) => {
+              if (err) return res.status(500).json({ error: 'Failed to create membership: ' + err.message });
+              createAccount(newRoommateId);
+            });
+          });
+        }
+      });
+    });
+  });
+});
+
 // Retrieve Roommates Registry & Memberships
+
 app.get('/api/roommates', (req, res) => {
   db.all(`
     SELECT r.id, r.name, gm.joined_at, gm.left_at

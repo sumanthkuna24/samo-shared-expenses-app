@@ -17,6 +17,20 @@ const api = {
     return response.json();
   },
 
+  register: async (username, password, roommateName) => {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, roommate_name: roommateName })
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Registration failed.');
+    }
+    return response.json();
+  },
+
+
   // Roommates Timelines
   getRoommates: async () => {
     const response = await fetch(`${API_BASE_URL}/roommates`);

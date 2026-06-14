@@ -2,15 +2,17 @@ import React, { useState } from 'react';
 import api from '../services/api';
 
 export default function Login({ onLoginSuccess }) {
+  const [isSignUp, setIsSignUp] = useState(false);
   const [username, setUsername] = useState('');
+  const [roommateName, setRoommateName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
-      setError('Please enter both username and password.');
+    if (!username.trim() || !password.trim() || (isSignUp && !roommateName.trim())) {
+      setError('Please fill out all required fields.');
       return;
     }
 
@@ -18,21 +20,39 @@ export default function Login({ onLoginSuccess }) {
     setError(null);
 
     try {
-      const response = await api.login(username, password);
-      if (response && response.user) {
-        onLoginSuccess(response.user);
+      if (isSignUp) {
+        const response = await api.register(username, password, roommateName);
+        if (response && response.user) {
+          onLoginSuccess(response.user);
+        } else {
+          setError('Registration succeeded but returned unexpected response.');
+        }
       } else {
-        setError('Login returned unexpected response schema.');
+        const response = await api.login(username, password);
+        if (response && response.user) {
+          onLoginSuccess(response.user);
+        } else {
+          setError('Login returned unexpected response schema.');
+        }
       }
     } catch (err) {
-      setError(err.message || 'Invalid username or password.');
+      setError(err.message || 'Authentication failed.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper helper to quickly autofill test credentials
+  const toggleAuthMode = () => {
+    setIsSignUp(!isSignUp);
+    setError(null);
+    setUsername('');
+    setRoommateName('');
+    setPassword('');
+  };
+
+  // Helper to quickly autofill test credentials
   const fillCredentials = (user) => {
+    setIsSignUp(false);
     setUsername(user);
     setPassword('password123');
     setError(null);
@@ -70,6 +90,21 @@ export default function Login({ onLoginSuccess }) {
             />
           </div>
 
+          {isSignUp && (
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Real Name</label>
+              <input
+                type="text"
+                className="form-input"
+                value={roommateName}
+                onChange={(e) => setRoommateName(e.target.value)}
+                placeholder="e.g. Rohan Sharma"
+                disabled={loading}
+                style={styles.input}
+              />
+            </div>
+          )}
+
           <div style={styles.inputGroup}>
             <label style={styles.label}>Password</label>
             <input
@@ -89,31 +124,43 @@ export default function Login({ onLoginSuccess }) {
             disabled={loading}
             style={styles.button}
           >
-            {loading ? 'Authenticating...' : 'Sign In'}
+            {loading ? 'Authenticating...' : isSignUp ? 'Sign Up' : 'Sign In'}
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleAuthMode}
+            disabled={loading}
+            style={styles.toggleLink}
+          >
+            {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
           </button>
         </form>
 
-        <div style={styles.testerSection}>
-          <h3 style={styles.testerTitle}>Demo Roommate Accounts</h3>
-          <p style={styles.testerSubtitle}>Click a roommate to autofill (password: <code>password123</code>)</p>
-          <div style={styles.pillContainer}>
-            {['aisha', 'rohan', 'priya', 'meera', 'sam'].map((u) => (
-              <button
-                key={u}
-                onClick={() => fillCredentials(u)}
-                style={styles.pill}
-                type="button"
-                disabled={loading}
-              >
-                {u.charAt(0).toUpperCase() + u.slice(1)}
-              </button>
-            ))}
+        {!isSignUp && (
+          <div style={styles.testerSection}>
+            <h3 style={styles.testerTitle}>Demo Roommate Accounts</h3>
+            <p style={styles.testerSubtitle}>Click a roommate to autofill (password: <code>password123</code>)</p>
+            <div style={styles.pillContainer}>
+              {['aisha', 'rohan', 'priya', 'meera', 'sam'].map((u) => (
+                <button
+                  key={u}
+                  onClick={() => fillCredentials(u)}
+                  style={styles.pill}
+                  type="button"
+                  disabled={loading}
+                >
+                  {u.charAt(0).toUpperCase() + u.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
+
 
 const styles = {
   container: {
@@ -210,7 +257,18 @@ const styles = {
     fontSize: '15px',
     fontWeight: '600',
   },
+  toggleLink: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--primary)',
+    fontSize: '13px',
+    cursor: 'pointer',
+    marginTop: '8px',
+    textDecoration: 'underline',
+    textAlign: 'center',
+  },
   testerSection: {
+
     marginTop: '32px',
     paddingTop: '24px',
     borderTop: '1px solid #e5e7eb',
