@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
 
-export default function AnomalyResolver({ anomalies, roommates, onRefresh }) {
+export default function AnomalyResolver({ anomalies, roommates, onRefresh, user }) {
   const [decisionLogs, setDecisionLogs] = useState([]);
   const [resolvingId, setResolvingId] = useState(null);
   const [error, setError] = useState(null);
@@ -23,12 +23,15 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh }) {
   const [newMemberJoinDate, setNewMemberJoinDate] = useState('2026-02-01');
 
   useEffect(() => {
-    fetchDecisionLogs();
-  }, []);
+    if (user?.roommate_id) {
+      fetchDecisionLogs();
+    }
+  }, [user]);
 
   const fetchDecisionLogs = async () => {
+    if (!user?.roommate_id) return;
     try {
-      const logs = await api.getDecisionLog();
+      const logs = await api.getDecisionLog(user.roommate_id);
       setDecisionLogs(logs);
     } catch (err) {
       console.error('Failed to load audit history:', err);
@@ -104,7 +107,7 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh }) {
     }
     try {
       setResolvingId(anomalyId);
-      const newRoommate = await api.createRoommate(newMemberName.trim(), newMemberJoinDate);
+      const newRoommate = await api.createRoommate(newMemberName.trim(), newMemberJoinDate, user.roommate_id);
       
       // Refresh options list
       await onRefresh();
@@ -215,7 +218,7 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh }) {
           throw new Error('Unsupported check.');
       }
 
-      await api.resolveAnomaly(anomaly.id, actionType, details);
+      await api.resolveAnomaly(anomaly.id, actionType, details, user.roommate_id);
       setSuccessMsg('Correction applied successfully.');
       await onRefresh();
       await fetchDecisionLogs();

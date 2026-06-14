@@ -73,8 +73,9 @@ const api = {
 
 
   // Resolve Anomaly
-  resolveAnomaly: async (anomalyId, actionType, details) => {
-    const response = await fetch(`${API_BASE_URL}/anomalies/resolve`, {
+  resolveAnomaly: async (anomalyId, actionType, details, roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/anomalies/resolve?roommateId=${roommateId}` : `${API_BASE_URL}/anomalies/resolve`;
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ anomalyId, actionType, details })
@@ -101,15 +102,17 @@ const api = {
 
 
   // Retrieve Decision Log Audit Trail
-  getDecisionLog: async () => {
-    const response = await fetch(`${API_BASE_URL}/decision-log`);
+  getDecisionLog: async (roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/decision-log?roommateId=${roommateId}` : `${API_BASE_URL}/decision-log`;
+    const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch decision logs.');
     return response.json();
   },
 
   // Register a new roommate in the system
-  createRoommate: async (name, joinedAt) => {
-    const response = await fetch(`${API_BASE_URL}/roommates`, {
+  createRoommate: async (name, joinedAt, roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/roommates?roommateId=${roommateId}` : `${API_BASE_URL}/roommates`;
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, joined_at: joinedAt })
@@ -151,8 +154,9 @@ const api = {
 
 
   // Create a new manual expense and splits allocation
-  createExpense: async (expenseData) => {
-    const response = await fetch(`${API_BASE_URL}/expenses`, {
+  createExpense: async (expenseData, roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/expenses?roommateId=${roommateId}` : `${API_BASE_URL}/expenses`;
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(expenseData)

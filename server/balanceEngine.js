@@ -3,6 +3,16 @@ const { db } = require('./database');
 // Retrieve all roommate balances, applying strict anomaly exclusions
 // Retrieve all roommate balances, applying strict anomaly exclusions for a specific group
 function getNetBalances(groupId, callback) {
+  let finalGroupId = groupId;
+  let finalCallback = callback;
+  if (typeof groupId === 'function') {
+    finalCallback = groupId;
+    finalGroupId = 1;
+  }
+  return getNetBalancesInternal(finalGroupId, finalCallback);
+}
+
+function getNetBalancesInternal(groupId, callback) {
   if (!groupId) {
     // If the user belongs to no groups, return empty datasets
     return callback(null, [], 0);
@@ -123,6 +133,16 @@ function getNetBalances(groupId, callback) {
 
 // Generate a chronological statement for a single roommate within a specific group
 function getRoommateLedger(roommateName, groupId, callback) {
+  let finalGroupId = groupId;
+  let finalCallback = callback;
+  if (typeof groupId === 'function') {
+    finalCallback = groupId;
+    finalGroupId = 1;
+  }
+  return getRoommateLedgerInternal(roommateName, finalGroupId, finalCallback);
+}
+
+function getRoommateLedgerInternal(roommateName, groupId, callback) {
   if (!groupId) {
     return callback(null, []);
   }

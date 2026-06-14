@@ -110,21 +110,28 @@ function classifyTransaction(row) {
   return 'uncertain';
 }
 
-function importCSV(filePath, callback) {
+function importCSV(filePath, groupId, callback) {
   console.log(`Reading CSV file from: ${filePath}`);
   
+  let finalGroupId = groupId;
+  let finalCallback = callback;
+  if (typeof groupId === 'function') {
+    finalCallback = groupId;
+    finalGroupId = null;
+  }
+
   let content;
   try {
     content = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
     console.error('Error reading CSV file:', err);
-    if (callback) callback(err);
+    if (finalCallback) finalCallback(err);
     return;
   }
 
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
   if (lines.length < 2) {
-    if (callback) callback(new Error('CSV file is empty or missing data rows.'));
+    if (finalCallback) finalCallback(new Error('CSV file is empty or missing data rows.'));
     return;
   }
 
@@ -142,9 +149,11 @@ function importCSV(filePath, callback) {
 
   db.serialize(() => {
     // Fetch all roommate names and IDs to map names dynamically
+    console.log('csvParser: querying roommates...');
     db.all('SELECT id, name FROM roommates', [], (err, roommateRows) => {
+      console.log('csvParser: roommates queried, count:', roommateRows ? roommateRows.length : 0, 'err:', err);
       if (err) {
-        if (callback) callback(err);
+        if (finalCallback) finalCallback(err);
         return;
       }
 
@@ -154,14 +163,34 @@ function importCSV(filePath, callback) {
         roommateMap[r.name.toLowerCase()] = r.id;
       });
 
-      // Fetch group id (using first group for simplicity)
-      db.get('SELECT id FROM groups LIMIT 1', [], (err, groupRow) => {
-        if (err || !groupRow) {
-          if (callback) callback(err || new Error('No group initialized in database.'));
+      const resolveGroupId = (cb) => {
+        if (finalGroupId) return cb(null, finalGroupId);
+        console.log('csvParser: resolveGroupId querying groups...');
+        db.get('SELECT id FROM groups LIMIT 1', [], (err, row) => {
+          console.log('csvParser: groups queried, row:', row, 'err:', err);
+          if (err) return cb(err);
+          cb(null, row ? row.id : null);
+        });
+      };
+
+      resolveGroupId((err, resolvedGroupId) => {
+        console.log('csvParser: resolveGroupId callback fired, resolvedGroupId:', resolvedGroupId, 'err:', err);
+        if (err || !resolvedGroupId) {
+          if (finalCallback) finalCallback(err || new Error('No group ID resolved for CSV import.'));
           return;
         }
 
-        const groupId = groupRow.id;
+        const groupId = resolvedGroupId;
+
+        let pendingWrites = 0;
+        let fileParsed = false;
+
+        const checkFinished = () => {
+          if (fileParsed && pendingWrites === 0) {
+            console.log(`Ingested ${lines.length - 1} rows into database.`);
+            if (finalCallback) finalCallback(null);
+          }
+        };
 
         // Loop and parse each data row
         for (let i = 1; i < lines.length; i++) {
@@ -232,6 +261,7 @@ function importCSV(filePath, callback) {
             const cleanRecipientName = normalizeName(csvSplitWith);
             const recipientId = cleanRecipientName ? roommateMap[cleanRecipientName.toLowerCase()] : null;
 
+            pendingWrites++;
             db.run(`
               INSERT INTO settlements (group_id, sender_id, receiver_id, amount, currency, exchange_rate, raw_date, parsed_date, notes, is_manual)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
@@ -245,10 +275,14 @@ function importCSV(filePath, callback) {
               csvDate,
               parsedDate,
               csvNotes
-            ]);
+            ], () => {
+              pendingWrites--;
+              checkFinished();
+            });
 
           } else {
             // Expense Path (or Uncertain rows matching Expense schema)
+            pendingWrites++;
             db.run(`
               INSERT INTO expenses (group_id, description, amount, currency, exchange_rate, paid_by_id, split_type, raw_date, parsed_date, notes, raw_csv_row, anomaly_status)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -268,6 +302,8 @@ function importCSV(filePath, callback) {
             ], function(err) {
               if (err) {
                 console.error('Error inserting expense:', err);
+                pendingWrites--;
+                checkFinished();
                 return;
               }
 
@@ -315,18 +351,23 @@ function importCSV(filePath, callback) {
                     shareAmount = proportion;
                   }
 
+                  pendingWrites++;
                   db.run(`
                     INSERT INTO expense_splits (expense_id, roommate_id, share_amount, share_proportion)
                     VALUES (?, ?, ?, ?)
-                  `, [expenseId, pId, shareAmount, proportion]);
+                  `, [expenseId, pId, shareAmount, proportion], () => {
+                    pendingWrites--;
+                    checkFinished();
+                  });
                 });
               }
+              pendingWrites--;
+              checkFinished();
             });
           }
         }
-        
-        console.log(`Ingested ${lines.length - 1} rows into database.`);
-        if (callback) callback(null);
+        fileParsed = true;
+        checkFinished();
       });
     });
   });

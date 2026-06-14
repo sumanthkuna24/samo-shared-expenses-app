@@ -150,7 +150,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
       return;
     }
     try {
-      const result = await api.createRoommate(memberName.trim(), memberJoinDate);
+      const result = await api.createRoommate(memberName.trim(), memberJoinDate, user.roommate_id);
       setMemberSuccess(`Member "${result.name}" joined the group!`);
       setMemberName('');
       await onRefresh();
@@ -203,7 +203,6 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
       const currentDate = new Date().toISOString().split('T')[0];
 
       await api.createExpense({
-        group_id: 1,
         description: expenseDesc.trim(),
         amount: parseFloat(expenseAmount),
         currency: expenseCurrency,
@@ -211,7 +210,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
         split_type: expenseSplitType,
         raw_date: currentDate,
         splits: splitPayload
-      });
+      }, user.roommate_id);
 
       setExpenseSuccess('Expense split recorded successfully!');
       setExpenseDesc('');
@@ -441,7 +440,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
             ) : feed.length === 0 ? (
               <div style={styles.emptyFeed}>
                 <span style={styles.feedEmptyIcon}>✍</span>
-                <p style={{ fontWeight: '500', color: 'var(--text-main)' }}>No expenses logged yet</p>
+                <p style={{ fontWeight: '500', color: 'var(--text-main)' }}>No expenses yet</p>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Click "Add Expense" to record a shared cost.</p>
               </div>
             ) : (

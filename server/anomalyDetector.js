@@ -6,33 +6,46 @@ function runAnomalyScan(callback) {
 
   db.serialize(() => {
     // 1. Rule: Missing Payer (AN-07) - Error
+    console.log('runAnomalyScan: Scanning missing_payer...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT id, 'missing_payer', 'Payer is missing or unrecognized in roommate profile.', 'error', 'unresolved'
       FROM expenses
       WHERE paid_by_id IS NULL AND anomaly_status != 'ignored'
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 1 missing_payer error:', err);
+      else console.log('runAnomalyScan Rule 1 missing_payer scan complete.');
+    });
 
     // 2. Rule: Missing Currency (AN-08) - Warning
+    console.log('runAnomalyScan: Scanning missing_currency...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT id, 'missing_currency', 'Currency field is empty.', 'warning', 'unresolved'
       FROM expenses
       WHERE (currency IS NULL OR currency = '') AND anomaly_status != 'ignored'
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 2 missing_currency error:', err);
+      else console.log('runAnomalyScan Rule 2 missing_currency scan complete.');
+    });
 
     // 3. Rule: Ambiguous Date (AN-14) - Error
+    console.log('runAnomalyScan: Scanning ambiguous_date...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT id, 'ambiguous_date', 'Transaction date is ambiguous (day/month conflict or text-based).', 'error', 'unresolved'
       FROM expenses
       WHERE parsed_date IS NULL AND anomaly_status != 'ignored'
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 3 ambiguous_date error:', err);
+      else console.log('runAnomalyScan Rule 3 ambiguous_date scan complete.');
+    });
 
     // 4. Rule: Split Percentage Sum Error (AN-09) - Error
+    console.log('runAnomalyScan: Scanning split_sum_error...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT es.expense_id, 'split_sum_error', 'Percentage splits do not sum to 100% (sums to ' || SUM(es.share_proportion) || '%).', 'error', 'unresolved'
@@ -42,64 +55,88 @@ function runAnomalyScan(callback) {
       GROUP BY es.expense_id
       HAVING ABS(SUM(es.share_proportion) - 100.0) > 0.01
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 4 split_sum_error error:', err);
+      else console.log('runAnomalyScan Rule 4 split_sum_error scan complete.');
+    });
 
     // 5. Rule: Temporal Membership Conflict (AN-15) - Warning
+    console.log('runAnomalyScan: Scanning temporal_violation...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT es.expense_id, 'temporal_violation', 'Split roommate ' || r.name || ' was inactive on transaction date ' || e.parsed_date, 'warning', 'unresolved'
       FROM expense_splits es
       JOIN expenses e ON es.expense_id = e.id
       JOIN roommates r ON es.roommate_id = r.id
-      JOIN group_memberships gm ON es.roommate_id = gm.roommate_id
+      JOIN group_memberships gm ON es.roommate_id = gm.roommate_id AND gm.group_id = e.group_id
       WHERE e.parsed_date IS NOT NULL AND e.anomaly_status != 'ignored'
         AND (e.parsed_date < gm.joined_at OR (gm.left_at IS NOT NULL AND e.parsed_date > gm.left_at))
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 5 temporal_violation error:', err);
+      else console.log('runAnomalyScan Rule 5 temporal_violation scan complete.');
+    });
 
     // 6. Rule: Potential Duplicates (AN-01) - Warning
+    console.log('runAnomalyScan: Scanning duplicate...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT e2.id, 'duplicate', 'Potential duplicate transaction of ID: ' || e1.id || ' ("' || e1.description || '")', 'warning', 'unresolved'
       FROM expenses e1
       JOIN expenses e2 ON e1.raw_date = e2.raw_date 
+        AND e1.group_id = e2.group_id
         AND (e1.paid_by_id = e2.paid_by_id OR (e1.paid_by_id IS NULL AND e2.paid_by_id IS NULL))
         AND e1.amount = e2.amount 
         AND e1.id < e2.id
         AND e1.anomaly_status != 'ignored'
         AND e2.anomaly_status != 'ignored'
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 6 duplicate error:', err);
+      else console.log('runAnomalyScan Rule 6 duplicate scan complete.');
+    });
 
     // 7. Rule: Ingestion Classification Ambiguity (AN-16) - Warning
+    console.log('runAnomalyScan: Scanning classification_ambiguity...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT id, 'classification_ambiguity', 'Transaction classification is uncertain (potential settlement logged as split expense).', 'warning', 'unresolved'
       FROM expenses
       WHERE anomaly_status = 'pending_resolution' AND description LIKE '%deposit%'
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 7 classification_ambiguity error:', err);
+      else console.log('runAnomalyScan Rule 7 classification_ambiguity scan complete.');
+    });
 
     // 9. Rule: Unregistered Split Participant - Error
+    console.log('runAnomalyScan: Scanning unregistered_participant...');
     db.run(`
       INSERT INTO data_anomalies (expense_id, category, description, severity, status)
       SELECT DISTINCT expense_id, 'unregistered_participant', 'Split contains unrecognized roommate profile.', 'error', 'unresolved'
       FROM expense_splits
       WHERE roommate_id IS NULL
       ON CONFLICT(expense_id, category) DO UPDATE SET description = excluded.description
-    `);
+    `, (err) => {
+      if (err) console.error('runAnomalyScan Rule 9 unregistered_participant error:', err);
+      else console.log('runAnomalyScan Rule 9 unregistered_participant scan complete.');
+    });
 
     // 8. Rule: Zero Value Expense (AN-06) - Auto-Ignore & Log in callback, then get count
+    console.log('runAnomalyScan: Scanning zero_value...');
     db.all("SELECT id, description FROM expenses WHERE amount = 0.0 AND anomaly_status != 'ignored'", [], (err, rows) => {
       if (err) {
+        console.error('runAnomalyScan Rule 8 zero_value select error:', err);
         if (callback) callback(err);
         return;
       }
+      console.log('runAnomalyScan Rule 8 zero_value select complete. Rows:', rows.length);
 
       if (rows.length === 0) {
         // No zero-value rows to process, query final count directly
         db.get('SELECT COUNT(*) as c FROM data_anomalies WHERE status = "unresolved"', [], (err, row) => {
           if (err) {
+            console.error('runAnomalyScan final count error:', err);
             if (callback) callback(err);
           } else {
             console.log(`Scan finished. Total unresolved anomalies in database: ${row ? row.c : 0}`);

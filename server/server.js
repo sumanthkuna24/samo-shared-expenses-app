@@ -28,31 +28,38 @@ app.use(cors({
 app.use(express.json());
 
 function getGroupIdForRequest(req, res, callback) {
-  const roommateId = req.query.roommateId;
-  const groupId = req.query.groupId;
-
-  if (groupId) {
-    return callback(null, parseInt(groupId));
-  }
+  const roommateId = req.query.roommateId || req.body.roommateId;
+  const groupId = req.query.groupId || req.body.groupId;
 
   if (!roommateId) {
-    // Fallback to first group if neither is provided (legacy support)
-    db.get('SELECT id FROM groups LIMIT 1', [], (err, row) => {
-      if (err) return callback(err);
-      callback(null, row ? row.id : null);
-    });
-    return;
+    // Do not leak Group 1 data if roommateId is missing
+    return callback(null, null);
   }
 
-  // Find the first group this roommate belongs to
-  db.get('SELECT group_id FROM group_memberships WHERE roommate_id = ? LIMIT 1', [roommateId], (err, row) => {
-    if (err) return callback(err);
-    if (!row) {
-      // Roommate belongs to no groups
-      return callback(null, null);
-    }
-    callback(null, row.group_id);
-  });
+  const rId = parseInt(roommateId);
+
+  if (groupId) {
+    const gId = parseInt(groupId);
+    // Verify that the roommate actually belongs to this group
+    db.get('SELECT id FROM group_memberships WHERE roommate_id = ? AND group_id = ?', [rId, gId], (err, row) => {
+      if (err) return callback(err);
+      if (!row) {
+        // Roommate does not belong to this group
+        return callback(null, null);
+      }
+      callback(null, gId);
+    });
+  } else {
+    // Find the first group this roommate belongs to
+    db.get('SELECT group_id FROM group_memberships WHERE roommate_id = ? LIMIT 1', [rId], (err, row) => {
+      if (err) return callback(err);
+      if (!row) {
+        // Roommate belongs to no groups
+        return callback(null, null);
+      }
+      callback(null, row.group_id);
+    });
+  }
 }
 
 // Initialize and Seed Database on boot
@@ -75,63 +82,131 @@ initDb((err) => {
 app.post('/api/import', (req, res) => {
   console.log('Received request to import expenses CSV...');
 
-  db.serialize(() => {
-    // 1. Truncate transaction-related tables for fresh testing
-    db.run('DELETE FROM expense_splits');
-    db.run('DELETE FROM data_anomalies');
-    db.run('DELETE FROM decision_log');
-    db.run('DELETE FROM settlements');
-    db.run('DELETE FROM expenses', (err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to clear tables: ' + err.message });
-      }
+  const roommateId = req.query.roommateId || req.body.roommateId;
 
-      // 2. Trigger parsing of the local CSV file
-      const csvPath = path.resolve(__dirname, '../expenses_export.csv');
-      importCSV(csvPath, (err) => {
+  const runImportForGroup = (gId) => {
+    db.serialize(() => {
+      // 1. Delete group's existing transactions safely
+      db.run('DELETE FROM expense_splits WHERE expense_id IN (SELECT id FROM expenses WHERE group_id = ?)', [gId]);
+      db.run(`
+        DELETE FROM data_anomalies 
+        WHERE expense_id IN (SELECT id FROM expenses WHERE group_id = ?)
+           OR settlement_id IN (SELECT id FROM settlements WHERE group_id = ?)
+      `, [gId, gId]);
+      db.run(`
+        DELETE FROM decision_log 
+        WHERE id IN (
+          SELECT decision_log_id FROM data_anomalies da
+          LEFT JOIN expenses e ON da.expense_id = e.id
+          LEFT JOIN settlements s ON da.settlement_id = s.id
+          WHERE e.group_id = ? OR s.group_id = ?
+        )
+      `, [gId, gId]);
+      db.run('DELETE FROM settlements WHERE group_id = ?', [gId]);
+      db.run('DELETE FROM expenses WHERE group_id = ?', [gId], (err) => {
         if (err) {
-          return res.status(500).json({ error: 'CSV Import failed: ' + err.message });
+          return res.status(500).json({ error: 'Failed to clear group tables: ' + err.message });
         }
-        
-        // 3. Chain runAnomalyScan immediately on import completion
-        const { runAnomalyScan } = require('./anomalyDetector');
-        runAnomalyScan((err, unresolvedCount) => {
-          if (err) {
-            return res.status(500).json({ error: 'Post-import anomaly scan failed: ' + err.message });
-          }
 
-          const roommateId = req.query.roommateId || req.body.roommateId;
-          if (roommateId) {
-            const rId = parseInt(roommateId);
-            db.get('SELECT id FROM group_memberships WHERE roommate_id = ? AND group_id = 1', [rId], (err, row) => {
-              if (!err && !row) {
+        // 2. Ensure sample dataset roommates are linked to this group
+        db.all('SELECT id, name FROM roommates', [], (err, roommateRows) => {
+          if (err) return res.status(500).json({ error: err.message });
+
+          const roommateMap = {};
+          roommateRows.forEach(r => {
+            roommateMap[r.name.toLowerCase()] = r.id;
+          });
+
+          const timelines = [
+            { name: 'Aisha', joined: '2026-02-01', left: null },
+            { name: 'Rohan', joined: '2026-02-01', left: null },
+            { name: 'Priya', joined: '2026-02-01', left: null },
+            { name: 'Meera', joined: '2026-02-01', left: '2026-03-29' },
+            { name: 'Sam', joined: '2026-04-08', left: null }
+          ];
+
+          db.serialize(() => {
+            timelines.forEach(t => {
+              const rId = roommateMap[t.name.toLowerCase()];
+              if (rId) {
                 db.run(`
-                  INSERT INTO group_memberships (group_id, roommate_id, joined_at)
-                  VALUES (1, ?, ?)
-                `, [rId, new Date().toISOString().split('T')[0]], () => {
-                  res.json({ 
-                    message: 'CSV imported successfully. Joined demo group.',
-                    unresolvedAnomalies: unresolvedCount
-                  });
-                });
-              } else {
-                res.json({ 
-                  message: 'CSV imported successfully. Post-import anomaly scan completed.',
-                  unresolvedAnomalies: unresolvedCount
-                });
+                  INSERT INTO group_memberships (group_id, roommate_id, joined_at, left_at)
+                  SELECT ?, ?, ?, ?
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM group_memberships 
+                    WHERE group_id = ? AND roommate_id = ?
+                  )
+                `, [gId, rId, t.joined, t.left, gId, rId]);
               }
             });
-          } else {
-            res.json({ 
-              message: 'CSV imported successfully. Post-import anomaly scan completed.',
-              unresolvedAnomalies: unresolvedCount
+
+            // 3. Trigger parsing of the local CSV file
+            const csvPath = path.resolve(__dirname, '../expenses_export.csv');
+            importCSV(csvPath, gId, (err) => {
+              if (err) {
+                return res.status(500).json({ error: 'CSV Import failed: ' + err.message });
+              }
+
+              // 4. Run anomaly scan
+              const { runAnomalyScan } = require('./anomalyDetector');
+              runAnomalyScan((err) => {
+                if (err) {
+                  return res.status(500).json({ error: 'Post-import anomaly scan failed: ' + err.message });
+                }
+
+                // Query unresolved anomalies for this group
+                db.get(`
+                  SELECT COUNT(*) as count 
+                  FROM data_anomalies da
+                  LEFT JOIN expenses e ON da.expense_id = e.id
+                  LEFT JOIN settlements s ON da.settlement_id = s.id
+                  WHERE da.status = 'unresolved' AND (e.group_id = ? OR s.group_id = ?)
+                `, [gId, gId], (err, row) => {
+                  if (err) return res.status(500).json({ error: err.message });
+                  res.json({
+                    message: 'CSV imported successfully.',
+                    unresolvedAnomalies: row ? row.count : 0
+                  });
+                });
+              });
             });
-          }
+          });
         });
       });
     });
+  };
 
-  });
+  if (roommateId) {
+    const rId = parseInt(roommateId);
+    db.get('SELECT group_id FROM group_memberships WHERE roommate_id = ? LIMIT 1', [rId], (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (row) {
+        // Roommate already belongs to a group, use it
+        runImportForGroup(row.group_id);
+      } else {
+        // Roommate belongs to no groups, create a new group "Apartment Roommates"
+        db.run("INSERT INTO groups (name, base_currency) VALUES ('Apartment Roommates', 'INR')", function(err) {
+          if (err) return res.status(500).json({ error: 'Failed to create group: ' + err.message });
+          const newGroupId = this.lastID;
+
+          // Link roommate to new group
+          db.run(`
+            INSERT INTO group_memberships (group_id, roommate_id, joined_at)
+            VALUES (?, ?, ?)
+          `, [newGroupId, rId, new Date().toISOString().split('T')[0]], (err) => {
+            if (err) return res.status(500).json({ error: 'Failed to create group membership: ' + err.message });
+            runImportForGroup(newGroupId);
+          });
+        });
+      }
+    });
+  } else {
+    // Fallback: use first group if neither is provided
+    db.get('SELECT id FROM groups LIMIT 1', [], (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      runImportForGroup(row ? row.id : 1);
+    });
+  }
 });
 
 // Trigger Anomaly Scan Route
@@ -153,11 +228,13 @@ app.get('/api/anomalies', (req, res) => {
 
     db.all(`
       SELECT da.id, da.category, da.description, da.severity, da.status,
-             e.id as expense_id, e.description as expense_description, e.amount, e.currency, e.raw_date
+             e.id as expense_id, e.description as expense_description, e.amount, e.currency, e.raw_date,
+             s.id as settlement_id, s.amount as settlement_amount, s.currency as settlement_currency
       FROM data_anomalies da
       LEFT JOIN expenses e ON da.expense_id = e.id
-      WHERE da.status = 'unresolved' AND e.group_id = ?
-    `, [groupId], (err, rows) => {
+      LEFT JOIN settlements s ON da.settlement_id = s.id
+      WHERE da.status = 'unresolved' AND (e.group_id = ? OR s.group_id = ?)
+    `, [groupId, groupId], (err, rows) => {
       if (err) {
         return res.status(500).json({ error: err.message });
       }
@@ -175,15 +252,34 @@ app.post('/api/anomalies/resolve', (req, res) => {
     return res.status(400).json({ error: 'anomalyId, actionType, and details parameters are required.' });
   }
 
-  const { resolveAnomaly, runAnomalyScan } = require('./anomalyDetector');
-  resolveAnomaly(anomalyId, actionType, details, (err) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+  getGroupIdForRequest(req, res, (err, groupId) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!groupId) return res.status(403).json({ error: 'You do not belong to any group.' });
 
-    // After resolving, re-run scan to update status of timeline overlaps/duplicates
-    runAnomalyScan((err, unresolvedCount) => {
-      res.json({ message: 'Anomaly resolved successfully.', unresolvedAnomaliesCount: unresolvedCount });
+    // Verify that the anomaly belongs to this group's expenses or settlements
+    db.get(`
+      SELECT da.id 
+      FROM data_anomalies da
+      LEFT JOIN expenses e ON da.expense_id = e.id
+      LEFT JOIN settlements s ON da.settlement_id = s.id
+      WHERE da.id = ? AND (e.group_id = ? OR s.group_id = ?)
+    `, [anomalyId, groupId, groupId], (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) {
+        return res.status(403).json({ error: 'Anomaly not found in your active group.' });
+      }
+
+      const { resolveAnomaly, runAnomalyScan } = require('./anomalyDetector');
+      resolveAnomaly(anomalyId, actionType, details, (err) => {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+
+        // After resolving, re-run scan to update status of timeline overlaps/duplicates
+        runAnomalyScan((err, unresolvedCount) => {
+          res.json({ message: 'Anomaly resolved successfully.', unresolvedAnomaliesCount: unresolvedCount });
+        });
+      });
     });
   });
 });
@@ -299,20 +395,29 @@ app.get('/api/roommates/:name/ledger', (req, res) => {
 
 // Retrieve Decision Resolution Audit Log
 app.get('/api/decision-log', (req, res) => {
-  db.all(`
-    SELECT id, action_type, resolution_details, timestamp 
-    FROM decision_log 
-    ORDER BY timestamp DESC
-  `, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    // Parse details string to JSON objects for cleaner API consumption
-    const parsedLogs = rows.map(r => ({
-      ...r,
-      resolution_details: JSON.parse(r.resolution_details)
-    }));
-    res.json(parsedLogs);
+  getGroupIdForRequest(req, res, (err, groupId) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!groupId) return res.json([]);
+
+    db.all(`
+      SELECT DISTINCT dl.id, dl.action_type, dl.resolution_details, dl.timestamp
+      FROM decision_log dl
+      JOIN data_anomalies da ON dl.id = da.decision_log_id
+      LEFT JOIN expenses e ON da.expense_id = e.id
+      LEFT JOIN settlements s ON da.settlement_id = s.id
+      WHERE e.group_id = ? OR s.group_id = ?
+      ORDER BY dl.timestamp DESC
+    `, [groupId, groupId], (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      // Parse details string to JSON objects for cleaner API consumption
+      const parsedLogs = rows.map(r => ({
+        ...r,
+        resolution_details: JSON.parse(r.resolution_details)
+      }));
+      res.json(parsedLogs);
+    });
   });
 });
 
@@ -479,30 +584,43 @@ app.post('/api/roommates', (req, res) => {
     return res.status(400).json({ error: 'Name and joined_at parameters are required.' });
   }
 
-  db.serialize(() => {
-    // 1. Insert into roommates
-    db.run('INSERT INTO roommates (name) VALUES (?)', [name], function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to create roommate: ' + err.message });
-      }
-      
-      const roommateId = this.lastID;
+  getGroupIdForRequest(req, res, (err, groupId) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-      // 2. Add group membership (defaulting to group_id = 1)
-      db.run(`
-        INSERT INTO group_memberships (group_id, roommate_id, joined_at)
-        VALUES (1, ?, ?)
-      `, [roommateId, joined_at], (err) => {
-        if (err) {
-          return res.status(500).json({ error: 'Failed to create group membership: ' + err.message });
+    const finalGroupId = groupId || 1;
+
+    db.serialize(() => {
+      // 1. Check if roommate exists globally first
+      db.get('SELECT id FROM roommates WHERE name = ? COLLATE NOCASE', [name.trim()], (err, existingRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const addMembership = (rId) => {
+          db.run(`
+            INSERT INTO group_memberships (group_id, roommate_id, joined_at)
+            VALUES (?, ?, ?)
+          `, [finalGroupId, rId, joined_at], (err) => {
+            if (err) {
+              return res.status(500).json({ error: 'Failed to create group membership: ' + err.message });
+            }
+            res.json({
+              id: rId,
+              name: name.trim(),
+              joined_at,
+              left_at: null
+            });
+          });
+        };
+
+        if (existingRow) {
+          addMembership(existingRow.id);
+        } else {
+          db.run('INSERT INTO roommates (name) VALUES (?)', [name.trim()], function(err) {
+            if (err) {
+              return res.status(500).json({ error: 'Failed to create roommate: ' + err.message });
+            }
+            addMembership(this.lastID);
+          });
         }
-        
-        res.json({
-          id: roommateId,
-          name,
-          joined_at,
-          left_at: null
-        });
       });
     });
   });
@@ -581,61 +699,67 @@ app.post('/api/expenses', (req, res) => {
     return res.status(400).json({ error: 'Missing required expense parameters (description, amount, currency, raw_date, splits).' });
   }
 
-  const rate = currency.toUpperCase() === 'USD' ? 83.0 : 1.0;
-  const numAmount = parseFloat(amount);
-  const payerId = paid_by_id ? parseInt(paid_by_id) : null;
+  getGroupIdForRequest(req, res, (err, groupId) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-  db.serialize(() => {
-    // 1. Insert expense record
-    db.run(`
-      INSERT INTO expenses (group_id, description, amount, currency, exchange_rate, paid_by_id, split_type, raw_date, parsed_date, anomaly_status, raw_csv_row)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', ?)
-    `, [
-      group_id || 1,
-      description,
-      numAmount,
-      currency.toUpperCase(),
-      rate,
-      payerId,
-      split_type,
-      raw_date,
-      raw_date,
-      `Manual: ${description} | Paid by: ${paid_by_id} | Amount: ${amount} ${currency}`
-    ], function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to insert expense record: ' + err.message });
-      }
+    const finalGroupId = groupId || group_id || 1;
 
-      const expenseId = this.lastID;
+    const rate = currency.toUpperCase() === 'USD' ? 83.0 : 1.0;
+    const numAmount = parseFloat(amount);
+    const payerId = paid_by_id ? parseInt(paid_by_id) : null;
 
-      // 2. Insert roommate split allocations
-      let splitError = null;
-      db.serialize(() => {
-        splits.forEach(s => {
-          const roommateId = parseInt(s.roommate_id);
-          const prop = parseFloat(s.proportion);
-          const shareAmt = split_type === 'equal' 
-            ? (numAmount / splits.length) 
-            : (numAmount * (prop / 100));
+    db.serialize(() => {
+      // 1. Insert expense record
+      db.run(`
+        INSERT INTO expenses (group_id, description, amount, currency, exchange_rate, paid_by_id, split_type, raw_date, parsed_date, anomaly_status, raw_csv_row)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', ?)
+      `, [
+        finalGroupId,
+        description,
+        numAmount,
+        currency.toUpperCase(),
+        rate,
+        payerId,
+        split_type,
+        raw_date,
+        raw_date,
+        `Manual: ${description} | Paid by: ${paid_by_id} | Amount: ${amount} ${currency}`
+      ], function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Failed to insert expense record: ' + err.message });
+        }
 
-          db.run(`
-            INSERT INTO expense_splits (expense_id, roommate_id, share_amount, share_proportion)
-            VALUES (?, ?, ?, ?)
-          `, [expenseId, roommateId, shareAmt, prop], (err) => {
-            if (err) splitError = err;
+        const expenseId = this.lastID;
+
+        // 2. Insert roommate split allocations
+        let splitError = null;
+        db.serialize(() => {
+          splits.forEach(s => {
+            const roommateId = parseInt(s.roommate_id);
+            const prop = parseFloat(s.proportion);
+            const shareAmt = split_type === 'equal' 
+              ? (numAmount / splits.length) 
+              : (numAmount * (prop / 100));
+
+            db.run(`
+              INSERT INTO expense_splits (expense_id, roommate_id, share_amount, share_proportion)
+              VALUES (?, ?, ?, ?)
+            `, [expenseId, roommateId, shareAmt, prop], (err) => {
+              if (err) splitError = err;
+            });
           });
-        });
 
-        // 3. Re-run scan to check for warnings on the newly created record
-        const { runAnomalyScan } = require('./anomalyDetector');
-        runAnomalyScan((err, unresolvedCount) => {
-          if (splitError || err) {
-            return res.status(500).json({ error: 'Split write or post-write scan failed: ' + (splitError?.message || err?.message) });
-          }
-          res.json({
-            message: 'Expense and split shares recorded successfully.',
-            expenseId,
-            unresolvedAnomalies: unresolvedCount
+          // 3. Re-run scan to check for warnings on the newly created record
+          const { runAnomalyScan } = require('./anomalyDetector');
+          runAnomalyScan((err, unresolvedCount) => {
+            if (splitError || err) {
+              return res.status(500).json({ error: 'Split write or post-write scan failed: ' + (splitError?.message || err?.message) });
+            }
+            res.json({
+              message: 'Expense and split shares recorded successfully.',
+              expenseId,
+              unresolvedAnomalies: unresolvedCount
+            });
           });
         });
       });
