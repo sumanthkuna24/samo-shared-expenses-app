@@ -298,7 +298,8 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh }) {
           {anomalies.length === 0 ? (
             <div className="glass-card" style={styles.allCleanCard}>
               <span style={styles.checkBadge}>✓</span>
-              <h3>All Imported Data Verified</h3>
+              <h3>Nothing to review</h3>
+
               <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Nice work! No transaction warnings or timeline conflicts exist in this group.</p>
             </div>
           ) : (

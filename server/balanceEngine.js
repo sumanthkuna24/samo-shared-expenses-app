@@ -121,8 +121,12 @@ function getNetBalances(groupId, callback) {
 }
 
 
-// Generate a chronological statement for a single roommate
-function getRoommateLedger(roommateName, callback) {
+// Generate a chronological statement for a single roommate within a specific group
+function getRoommateLedger(roommateName, groupId, callback) {
+  if (!groupId) {
+    return callback(null, []);
+  }
+
   // Find roommate ID first
   db.get('SELECT id, name FROM roommates WHERE name = ? COLLATE NOCASE', [roommateName], (err, roommate) => {
     if (err || !roommate) {
@@ -131,7 +135,7 @@ function getRoommateLedger(roommateName, callback) {
 
     const rId = roommate.id;
 
-    // Fetch all active expenses and splits involving the roommate
+    // Fetch all active expenses and splits involving the roommate in this group
     const expensesQuery = `
       SELECT e.id, e.description, e.amount, e.currency, e.exchange_rate, 
              e.raw_date, e.parsed_date, r.name as paid_by_name, es.share_amount, e.anomaly_status,
@@ -139,31 +143,33 @@ function getRoommateLedger(roommateName, callback) {
       FROM expenses e
       LEFT JOIN roommates r ON e.paid_by_id = r.id
       JOIN expense_splits es ON e.id = es.expense_id
-      WHERE es.roommate_id = ? AND e.anomaly_status != 'ignored'
+      WHERE es.roommate_id = ? AND e.anomaly_status != 'ignored' AND e.group_id = ?
     `;
 
-    // Fetch all settlements involving the roommate
+    // Fetch all settlements involving the roommate in this group
     const settlementsQuery = `
       SELECT s.id, 'Repayment' as description, s.amount, s.currency, s.exchange_rate, 
              s.raw_date, s.parsed_date, r1.name as sender_name, r2.name as receiver_name, s.notes
       FROM settlements s
       JOIN roommates r1 ON s.sender_id = r1.id
       JOIN roommates r2 ON s.receiver_id = r2.id
-      WHERE s.sender_id = ? OR s.receiver_id = ?
+      WHERE (s.sender_id = ? OR s.receiver_id = ?) AND s.group_id = ?
     `;
 
-    db.all(expensesQuery, [rId], (err, expenseRows) => {
+    db.all(expensesQuery, [rId, groupId], (err, expenseRows) => {
       if (err) return callback(err);
 
-      db.all(settlementsQuery, [rId, rId], (err, settlementRows) => {
+      db.all(settlementsQuery, [rId, rId, groupId], (err, settlementRows) => {
         if (err) return callback(err);
 
-        // Fetch all expense splits to map split members
+        // Fetch all expense splits for this group
         db.all(`
           SELECT es.expense_id, r.name as roommate_name
           FROM expense_splits es
           JOIN roommates r ON es.roommate_id = r.id
-        `, [], (err, splitRows) => {
+          JOIN expenses e ON es.expense_id = e.id
+          WHERE e.group_id = ?
+        `, [groupId], (err, splitRows) => {
           if (err) return callback(err);
 
           const splitsMap = {};
@@ -172,11 +178,13 @@ function getRoommateLedger(roommateName, callback) {
             splitsMap[sr.expense_id].push(sr.roommate_name);
           });
 
-          // Fetch all anomalies to map anomaly information
+          // Fetch all anomalies for this group
           db.all(`
-            SELECT expense_id, category, description, severity, status 
-            FROM data_anomalies
-          `, [], (err, anomalyRows) => {
+            SELECT da.expense_id, da.category, da.description, da.severity, da.status 
+            FROM data_anomalies da
+            JOIN expenses e ON da.expense_id = e.id
+            WHERE e.group_id = ?
+          `, [groupId], (err, anomalyRows) => {
             if (err) return callback(err);
 
             const anomaliesMap = {};
@@ -192,11 +200,15 @@ function getRoommateLedger(roommateName, callback) {
               }
             });
 
-            // Fetch excluded expenses list to mark status
+            // Fetch excluded expenses list for this group
             db.all(`
-              SELECT DISTINCT expense_id FROM data_anomalies 
-              WHERE status = 'unresolved' AND category IN ('missing_payer', 'missing_currency', 'split_sum_error', 'ambiguous_date', 'unregistered_participant')
-            `, [], (err, excludedRows) => {
+              SELECT DISTINCT da.expense_id 
+              FROM data_anomalies da
+              JOIN expenses e ON da.expense_id = e.id
+              WHERE da.status = 'unresolved' 
+                AND da.category IN ('missing_payer', 'missing_currency', 'split_sum_error', 'ambiguous_date', 'unregistered_participant')
+                AND e.group_id = ?
+            `, [groupId], (err, excludedRows) => {
               if (err) return callback(err);
 
               const excludedIds = new Set(excludedRows.map(row => row.expense_id));
@@ -282,6 +294,7 @@ function getRoommateLedger(roommateName, callback) {
                   running_balance: Math.round(runningBalance * 100) / 100
                 };
               });
+
 
               callback(null, finalLedger);
             });

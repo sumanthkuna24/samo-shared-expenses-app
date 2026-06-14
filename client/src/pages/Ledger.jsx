@@ -27,7 +27,7 @@ export default function Ledger({ roommates, user }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getLedger(selectedRoommateName);
+      const data = await api.getLedger(selectedRoommateName, user.roommate_id);
       setLedger(data);
     } catch (err) {
       setError(err.message || 'Failed to retrieve roommate ledger statements.');
@@ -36,6 +36,7 @@ export default function Ledger({ roommates, user }) {
       setLoading(false);
     }
   };
+
 
   const toggleRowExpand = (id) => {
     if (expandedRowId === id) {
@@ -67,9 +68,31 @@ export default function Ledger({ roommates, user }) {
     }
   });
 
-  const finalNet = totalPaid - totalShare + settlementsSent - settlementsReceived;
+  if (!roommates || roommates.length === 0) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.topSection}>
+          <div className="glass-card" style={styles.selectorCard}>
+            <label style={styles.selectLabel}>Select Roommate Ledger</label>
+            <select className="form-input" disabled style={styles.select}>
+              <option>No roommates available</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="glass-card" style={styles.tableCard}>
+          <div style={styles.tableHeader}>
+            <h3 style={styles.tableTitle}>Chronological Balance Breakdown</h3>
+            <span style={styles.tableSubtitle}>Select any row to view raw CSV details, currency exchange, and split participants.</span>
+          </div>
+          <div style={styles.emptyBox}>No transactions available</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
+
     <div style={styles.container}>
       {/* Selector & Summary */}
       <div style={styles.topSection}>
@@ -142,8 +165,9 @@ export default function Ledger({ roommates, user }) {
               <span>Loading roommate ledger records...</span>
             </div>
           ) : ledger.length === 0 ? (
-            <div style={styles.emptyBox}>No transaction history logged for this roommate.</div>
+            <div style={styles.emptyBox}>No transactions available</div>
           ) : (
+
             <table style={styles.table}>
               <thead>
                 <tr style={styles.thRow}>

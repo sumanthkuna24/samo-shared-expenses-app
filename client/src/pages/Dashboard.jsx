@@ -50,7 +50,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
   const fetchFeed = async () => {
     setLoadingFeed(true);
     try {
-      const data = await api.getLedger(user.roommate_name);
+      const data = await api.getLedger(user.roommate_name, user.roommate_id);
       // Filter expenses and sort chronologically descending (newest first)
       const expenses = data.filter(item => item.type === 'expense').reverse();
       setFeed(expenses);
@@ -60,6 +60,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
       setLoadingFeed(false);
     }
   };
+
 
   // Initialize splits checklists
   useEffect(() => {

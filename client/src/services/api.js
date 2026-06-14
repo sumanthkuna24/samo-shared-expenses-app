@@ -87,14 +87,18 @@ const api = {
   },
 
   // Retrieve Roommate Chronological Trace Ledger
-  getLedger: async (roommateName) => {
-    const response = await fetch(`${API_BASE_URL}/roommates/${roommateName}/ledger`);
+  getLedger: async (roommateName, roommateId) => {
+    const url = roommateId 
+      ? `${API_BASE_URL}/roommates/${roommateName}/ledger?roommateId=${roommateId}`
+      : `${API_BASE_URL}/roommates/${roommateName}/ledger`;
+    const response = await fetch(url);
     if (!response.ok) {
       const errorData = await response.json();
       throw new Error(errorData.error || 'Failed to fetch roommate ledger.');
     }
     return response.json();
   },
+
 
   // Retrieve Decision Log Audit Trail
   getDecisionLog: async () => {

@@ -283,13 +283,19 @@ app.get('/api/roommates/:name/ledger', (req, res) => {
   const roommateName = req.params.name;
   const { getRoommateLedger } = require('./balanceEngine');
 
-  getRoommateLedger(roommateName, (err, ledger) => {
-    if (err) {
-      return res.status(404).json({ error: err.message });
-    }
-    res.json(ledger);
+  getGroupIdForRequest(req, res, (err, groupId) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!groupId) return res.json([]);
+
+    getRoommateLedger(roommateName, groupId, (err, ledger) => {
+      if (err) {
+        return res.status(404).json({ error: err.message });
+      }
+      res.json(ledger);
+    });
   });
 });
+
 
 // Retrieve Decision Resolution Audit Log
 app.get('/api/decision-log', (req, res) => {
