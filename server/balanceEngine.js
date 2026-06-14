@@ -1,43 +1,60 @@
 const { db } = require('./database');
 
 // Retrieve all roommate balances, applying strict anomaly exclusions
-function getNetBalances(callback) {
+// Retrieve all roommate balances, applying strict anomaly exclusions for a specific group
+function getNetBalances(groupId, callback) {
+  if (!groupId) {
+    // If the user belongs to no groups, return empty datasets
+    return callback(null, [], 0);
+  }
+
   // Query to find all critical unresolved anomalies that must exclude their expenses
   const excludeQuery = `
-    SELECT DISTINCT expense_id 
-    FROM data_anomalies 
-    WHERE status = 'unresolved' 
-      AND category IN ('missing_payer', 'missing_currency', 'split_sum_error', 'ambiguous_date', 'unregistered_participant')
+    SELECT DISTINCT da.expense_id 
+    FROM data_anomalies da
+    JOIN expenses e ON da.expense_id = e.id
+    WHERE da.status = 'unresolved' 
+      AND da.category IN ('missing_payer', 'missing_currency', 'split_sum_error', 'ambiguous_date', 'unregistered_participant')
+      AND e.group_id = ?
   `;
 
-  db.all(excludeQuery, [], (err, excludedRows) => {
+  db.all(excludeQuery, [groupId], (err, excludedRows) => {
     if (err) return callback(err);
 
     const excludedIds = new Set(excludedRows.map(r => r.expense_id).filter(Boolean));
 
-    // Fetch roommates, active expenses, active splits, and settlements
-    db.all('SELECT id, name FROM roommates', [], (err, roommates) => {
+    // Fetch roommates belonging to this group
+    db.all(`
+      SELECT r.id, r.name 
+      FROM roommates r
+      JOIN group_memberships gm ON r.id = gm.roommate_id
+      WHERE gm.group_id = ?
+    `, [groupId], (err, roommates) => {
       if (err) return callback(err);
 
+      // Fetch active expenses in this group
       db.all(`
         SELECT id, paid_by_id, amount, currency, exchange_rate 
         FROM expenses 
-        WHERE anomaly_status != 'ignored'
-      `, [], (err, expenses) => {
+        WHERE anomaly_status != 'ignored' AND group_id = ?
+      `, [groupId], (err, expenses) => {
         if (err) return callback(err);
 
+        // Fetch active splits in this group
         db.all(`
           SELECT es.expense_id, es.roommate_id, es.share_amount 
           FROM expense_splits es
           JOIN expenses e ON es.expense_id = e.id
-          WHERE e.anomaly_status != 'ignored'
-        `, [], (err, splits) => {
+          WHERE e.anomaly_status != 'ignored' AND e.group_id = ?
+        `, [groupId], (err, splits) => {
           if (err) return callback(err);
 
+          // Fetch settlements in this group
           db.all(`
             SELECT sender_id, receiver_id, amount, currency, exchange_rate 
             FROM settlements
-          `, [], (err, settlements) => {
+            WHERE group_id = ?
+          `, [groupId], (err, settlements) => {
             if (err) return callback(err);
 
             // Initialize balance map
@@ -102,6 +119,7 @@ function getNetBalances(callback) {
     });
   });
 }
+
 
 // Generate a chronological statement for a single roommate
 function getRoommateLedger(roommateName, callback) {

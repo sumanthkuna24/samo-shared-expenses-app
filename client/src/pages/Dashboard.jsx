@@ -6,6 +6,8 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showMemberForm, setShowMemberForm] = useState(false);
+  const [loadingJoin, setLoadingJoin] = useState(false);
+
   
   // CSV Import state
   const [importing, setImporting] = useState(false);
@@ -87,7 +89,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
     setImporting(true);
     setImportStatus(null);
     try {
-      const result = await api.importCSV();
+      const result = await api.importCSV(user.roommate_id);
       setImportStatus({
         success: true,
         message: `Imported successfully! ${result.unresolvedAnomalies || 0} review items created.`
@@ -112,7 +114,7 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
       return;
     }
     try {
-      const result = await api.createGroup(groupName.trim(), groupCurrency);
+      const result = await api.createGroup(groupName.trim(), groupCurrency, user.roommate_id);
       setGroupSuccess(`Group "${result.name}" created successfully!`);
       setGroupName('');
       await onRefresh();
@@ -124,6 +126,19 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
       setGroupError(err.message || 'Failed to create group.');
     }
   };
+
+  const handleJoinDemoGroup = async () => {
+    setLoadingJoin(true);
+    try {
+      await api.joinGroup(user.roommate_id, 1);
+      await onRefresh();
+    } catch (err) {
+      console.error('Failed to join demo group:', err);
+    } finally {
+      setLoadingJoin(false);
+    }
+  };
+
 
   const handleAddMember = async (e) => {
     e.preventDefault();
@@ -232,7 +247,122 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
     }
   });
 
+  if (balances.length === 0) {
+    return (
+      <div style={styles.container}>
+        {/* 1. BRAND HERO ROW */}
+        <div style={styles.dashboardHero}>
+          <div style={styles.heroLeft}>
+            <span style={styles.heroGreeting}>Welcome back,</span>
+            <h2 style={styles.heroUser}>{user.roommate_name}</h2>
+          </div>
+          <div style={styles.heroRight}>
+            <button className="btn-primary" onClick={() => setShowGroupModal(true)} style={styles.addExpenseBtn}>
+              Create a Group
+            </button>
+          </div>
+        </div>
+
+        {/* 2. ONBOARDING EMPTY STATE */}
+        <div className="glass-card" style={styles.onboardingCard}>
+          <div style={styles.onboardingIcon}>👋</div>
+          <h2 style={styles.onboardingTitle}>No expenses yet</h2>
+          <p style={styles.onboardingSubtitle}>
+            Create a group or add your first expense to get started. You can also join the demo roommate group to try out the sample dataset.
+          </p>
+
+          <div style={styles.onboardingActions}>
+            <button 
+              className="btn-primary" 
+              onClick={() => setShowGroupModal(true)}
+              style={styles.onboardingBtn}
+            >
+              Create a Group
+            </button>
+            <button 
+              className="btn-secondary" 
+              onClick={handleJoinDemoGroup}
+              disabled={loadingJoin}
+              style={{ ...styles.onboardingBtn, marginLeft: '12px' }}
+            >
+              {loadingJoin ? 'Joining...' : 'Join Demo Group'}
+            </button>
+            <button 
+              className="btn-secondary" 
+              onClick={handleImport}
+              disabled={importing}
+              style={{ ...styles.onboardingBtn, marginLeft: '12px' }}
+            >
+              {importing ? 'Importing...' : 'Import Sample Dataset'}
+            </button>
+          </div>
+          {importStatus && (
+            <div 
+              style={{
+                ...styles.importAlert,
+                marginTop: '20px',
+                maxWidth: '400px',
+                margin: '20px auto 0 auto',
+                backgroundColor: importStatus.success ? 'rgba(22, 163, 74, 0.08)' : 'rgba(220, 38, 38, 0.08)',
+                borderColor: importStatus.success ? 'var(--creditor-green)' : 'var(--debtor-red)',
+                color: importStatus.success ? 'var(--creditor-green)' : 'var(--debtor-red)'
+              }}
+            >
+              {importStatus.message}
+            </div>
+          )}
+        </div>
+
+        {/* ================= MODAL: CREATE GROUP ================= */}
+        {showGroupModal && (
+          <div style={styles.modalOverlay}>
+            <div className="glass-card" style={styles.modalCard}>
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Create New Group</h3>
+                <button style={styles.modalClose} onClick={() => setShowGroupModal(false)}>×</button>
+              </div>
+              <form onSubmit={handleCreateGroup} style={styles.modalForm}>
+                {groupError && <div style={styles.modalError}>{groupError}</div>}
+                {groupSuccess && <div style={styles.modalSuccess}>{groupSuccess}</div>}
+
+                <div style={styles.inputGroup}>
+                  <label style={styles.inputLabel}>Group Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="e.g. Goa Trip 2026"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+
+                <div style={styles.inputGroup}>
+                  <label style={styles.inputLabel}>Base Currency</label>
+                  <select
+                    className="form-input"
+                    value={groupCurrency}
+                    onChange={(e) => setGroupCurrency(e.target.value)}
+                    disabled={loading}
+                  >
+                    <option value="INR">INR (Indian Rupee)</option>
+                    <option value="USD">USD (US Dollar)</option>
+                  </select>
+                </div>
+
+                <button type="submit" className="btn-primary" style={{ marginTop: '10px' }} disabled={loading}>
+                  Create Group
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
+
     <div style={styles.container}>
       {/* 1. BRAND HERO ROW */}
       <div style={styles.dashboardHero}>
@@ -1223,5 +1353,46 @@ const styles = {
     borderTopColor: 'var(--primary)',
     borderRadius: '50%',
     animation: 'spin 0.8s linear infinite',
+  },
+  onboardingCard: {
+    padding: '60px 40px',
+    textAlign: 'center',
+    backgroundColor: '#ffffff',
+    border: '1px solid #e5e7eb',
+    borderRadius: '12px',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.02)',
+    maxWidth: '700px',
+    margin: '40px auto 0 auto',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '20px',
+  },
+  onboardingIcon: {
+    fontSize: '48px',
+  },
+  onboardingTitle: {
+    fontSize: '24px',
+    fontWeight: '600',
+    color: '#1d1d1f',
+  },
+  onboardingSubtitle: {
+    fontSize: '14px',
+    color: 'var(--text-muted)',
+    lineHeight: '1.6',
+    maxWidth: '500px',
+  },
+  onboardingActions: {
+    display: 'flex',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: '12px',
+    marginTop: '10px',
+  },
+  onboardingBtn: {
+    padding: '10px 20px',
+    fontSize: '14px',
+    fontWeight: '600',
   }
 };
+

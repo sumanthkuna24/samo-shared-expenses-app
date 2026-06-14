@@ -32,15 +32,17 @@ const api = {
 
 
   // Roommates Timelines
-  getRoommates: async () => {
-    const response = await fetch(`${API_BASE_URL}/roommates`);
+  getRoommates: async (roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/roommates?roommateId=${roommateId}` : `${API_BASE_URL}/roommates`;
+    const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch roommates timelines.');
     return response.json();
   },
 
   // CSV Import (clears existing data and runs ingestion)
-  importCSV: async () => {
-    const response = await fetch(`${API_BASE_URL}/import`, {
+  importCSV: async (roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/import?roommateId=${roommateId}` : `${API_BASE_URL}/import`;
+    const response = await fetch(url, {
       method: 'POST'
     });
     if (!response.ok) {
@@ -51,8 +53,9 @@ const api = {
   },
 
   // Retrieve Ledger status, Balances and Settlements
-  getBalances: async () => {
-    const response = await fetch(`${API_BASE_URL}/balances`);
+  getBalances: async (roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/balances?roommateId=${roommateId}` : `${API_BASE_URL}/balances`;
+    const response = await fetch(url);
     if (!response.ok) {
       const errorData = await response.json();
       throw new Error(errorData.error || 'Failed to fetch balances.');
@@ -61,11 +64,13 @@ const api = {
   },
 
   // Retrieve Active Anomalies
-  getAnomalies: async () => {
-    const response = await fetch(`${API_BASE_URL}/anomalies`);
+  getAnomalies: async (roommateId) => {
+    const url = roommateId ? `${API_BASE_URL}/anomalies?roommateId=${roommateId}` : `${API_BASE_URL}/anomalies`;
+    const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch anomalies.');
     return response.json();
   },
+
 
   // Resolve Anomaly
   resolveAnomaly: async (anomalyId, actionType, details) => {
@@ -113,11 +118,11 @@ const api = {
   },
 
   // Create a new expense group
-  createGroup: async (name, baseCurrency) => {
+  createGroup: async (name, baseCurrency, roommateId) => {
     const response = await fetch(`${API_BASE_URL}/groups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, base_currency: baseCurrency })
+      body: JSON.stringify({ name, base_currency: baseCurrency, roommate_id: roommateId })
     });
     if (!response.ok) {
       const errorData = await response.json();
@@ -125,6 +130,21 @@ const api = {
     }
     return response.json();
   },
+
+  // Join an existing group
+  joinGroup: async (roommateId, groupId) => {
+    const response = await fetch(`${API_BASE_URL}/groups/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roommate_id: roommateId, group_id: groupId })
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to join group.');
+    }
+    return response.json();
+  },
+
 
   // Create a new manual expense and splits allocation
   createExpense: async (expenseData) => {

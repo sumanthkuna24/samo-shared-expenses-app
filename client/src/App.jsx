@@ -41,10 +41,11 @@ export default function App() {
     setAppError(null);
     try {
       const [balRes, anomRes, roomRes] = await Promise.all([
-        api.getBalances(),
-        api.getAnomalies(),
-        api.getRoommates()
+        api.getBalances(user.roommate_id),
+        api.getAnomalies(user.roommate_id),
+        api.getRoommates(user.roommate_id)
       ]);
+
 
       setBalancesData(balRes);
       setAnomalies(anomRes);
