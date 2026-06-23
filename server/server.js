@@ -56,13 +56,23 @@ function getGroupIdForRequest(req, res, callback) {
       callback(null, gId);
     });
   } else {
-    // The most recently joined/created group is the active group when the client
-    // has not explicitly selected one. Never rely on SQLite's unordered first row.
+    // Prefer a group that already has activity. This keeps predefined/demo
+    // accounts attached to their seeded transaction history even if they were
+    // accidentally linked to later empty sample groups. If no group has data
+    // yet, fall back to the most recently joined/created group so new users stay
+    // isolated in their own new group.
     db.get(`
-      SELECT group_id
-      FROM group_memberships
-      WHERE roommate_id = ?
-      ORDER BY id DESC
+      SELECT gm.group_id
+      FROM group_memberships gm
+      WHERE gm.roommate_id = ?
+      ORDER BY
+        CASE
+          WHEN EXISTS (SELECT 1 FROM expenses e WHERE e.group_id = gm.group_id)
+            OR EXISTS (SELECT 1 FROM settlements s WHERE s.group_id = gm.group_id)
+          THEN 1
+          ELSE 0
+        END DESC,
+        gm.id DESC
       LIMIT 1
     `, [rId], (err, row) => {
       if (err) return callback(err);
