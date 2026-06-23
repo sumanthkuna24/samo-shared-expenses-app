@@ -36,10 +36,16 @@ function getGroupIdForRequest(req, res, callback) {
     return callback(null, null);
   }
 
-  const rId = parseInt(roommateId);
+  const rId = Number.parseInt(roommateId, 10);
+  if (!Number.isInteger(rId) || rId <= 0) {
+    return callback(null, null);
+  }
 
   if (groupId) {
-    const gId = parseInt(groupId);
+    const gId = Number.parseInt(groupId, 10);
+    if (!Number.isInteger(gId) || gId <= 0) {
+      return callback(null, null);
+    }
     // Verify that the roommate actually belongs to this group
     db.get('SELECT id FROM group_memberships WHERE roommate_id = ? AND group_id = ?', [rId, gId], (err, row) => {
       if (err) return callback(err);
@@ -50,8 +56,15 @@ function getGroupIdForRequest(req, res, callback) {
       callback(null, gId);
     });
   } else {
-    // Find the first group this roommate belongs to
-    db.get('SELECT group_id FROM group_memberships WHERE roommate_id = ? LIMIT 1', [rId], (err, row) => {
+    // The most recently joined/created group is the active group when the client
+    // has not explicitly selected one. Never rely on SQLite's unordered first row.
+    db.get(`
+      SELECT group_id
+      FROM group_memberships
+      WHERE roommate_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `, [rId], (err, row) => {
       if (err) return callback(err);
       if (!row) {
         // Roommate belongs to no groups
@@ -497,6 +510,10 @@ app.post('/api/auth/register', (req, res) => {
   const cleanUsername = username.toLowerCase().trim();
   const cleanRoommateName = roommate_name.trim();
 
+  if (!cleanUsername || !cleanRoommateName || !password.trim()) {
+    return res.status(400).json({ error: 'Username, password, and roommate name cannot be blank.' });
+  }
+
   db.serialize(() => {
     // 1. Check if user already exists
     db.get('SELECT id FROM users WHERE username = ?', [cleanUsername], (err, userRow) => {
@@ -587,7 +604,9 @@ app.post('/api/roommates', (req, res) => {
   getGroupIdForRequest(req, res, (err, groupId) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    const finalGroupId = groupId || 1;
+    if (!groupId) {
+      return res.status(403).json({ error: 'Create or join a group before adding members.' });
+    }
 
     db.serialize(() => {
       // 1. Check if roommate exists globally first
@@ -595,20 +614,30 @@ app.post('/api/roommates', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
 
         const addMembership = (rId) => {
-          db.run(`
-            INSERT INTO group_memberships (group_id, roommate_id, joined_at)
-            VALUES (?, ?, ?)
-          `, [finalGroupId, rId, joined_at], (err) => {
-            if (err) {
-              return res.status(500).json({ error: 'Failed to create group membership: ' + err.message });
-            }
-            res.json({
-              id: rId,
-              name: name.trim(),
-              joined_at,
-              left_at: null
+          db.get(
+            'SELECT id FROM group_memberships WHERE group_id = ? AND roommate_id = ?',
+            [groupId, rId],
+            (err, membership) => {
+              if (err) return res.status(500).json({ error: err.message });
+              if (membership) {
+                return res.status(409).json({ error: 'This member already belongs to the active group.' });
+              }
+
+              db.run(`
+                INSERT INTO group_memberships (group_id, roommate_id, joined_at)
+                VALUES (?, ?, ?)
+              `, [groupId, rId, joined_at], (err) => {
+                if (err) {
+                  return res.status(500).json({ error: 'Failed to create group membership: ' + err.message });
+                }
+                res.json({
+                  id: rId,
+                  name: name.trim(),
+                  joined_at,
+                  left_at: null
+                });
+              });
             });
-          });
         };
 
         if (existingRow) {
@@ -630,37 +659,35 @@ app.post('/api/roommates', (req, res) => {
 app.post('/api/groups', (req, res) => {
   const { name, base_currency, roommate_id } = req.body;
 
-  if (!name) {
-    return res.status(400).json({ error: 'Group name is required.' });
+  const creatorId = Number.parseInt(roommate_id, 10);
+  if (!name || !Number.isInteger(creatorId) || creatorId <= 0) {
+    return res.status(400).json({ error: 'Group name and a valid creator are required.' });
   }
 
-  db.run('INSERT INTO groups (name, base_currency) VALUES (?, ?)', [name, base_currency || 'INR'], function(err) {
+  db.get('SELECT id FROM roommates WHERE id = ?', [creatorId], (lookupErr, creator) => {
+    if (lookupErr) return res.status(500).json({ error: lookupErr.message });
+    if (!creator) return res.status(404).json({ error: 'Group creator was not found.' });
+
+    db.run('INSERT INTO groups (name, base_currency) VALUES (?, ?)', [name.trim(), base_currency || 'INR'], function(err) {
     if (err) {
       return res.status(500).json({ error: 'Failed to create group: ' + err.message });
     }
     const groupId = this.lastID;
 
-    if (roommate_id) {
       db.run(`
         INSERT INTO group_memberships (group_id, roommate_id, joined_at)
         VALUES (?, ?, ?)
-      `, [groupId, parseInt(roommate_id), new Date().toISOString().split('T')[0]], (memberErr) => {
+      `, [groupId, creatorId, new Date().toISOString().split('T')[0]], (memberErr) => {
         if (memberErr) {
           return res.status(500).json({ error: 'Failed to link group creator: ' + memberErr.message });
         }
         res.json({
           id: groupId,
-          name,
+          name: name.trim(),
           base_currency: base_currency || 'INR'
         });
       });
-    } else {
-      res.json({
-        id: groupId,
-        name,
-        base_currency: base_currency || 'INR'
-      });
-    }
+    });
   });
 });
 
@@ -671,21 +698,32 @@ app.post('/api/groups/join', (req, res) => {
     return res.status(400).json({ error: 'roommate_id and group_id are required.' });
   }
 
-  const rId = parseInt(roommate_id);
-  const gId = parseInt(group_id);
+  const rId = Number.parseInt(roommate_id, 10);
+  const gId = Number.parseInt(group_id, 10);
+  if (!Number.isInteger(rId) || !Number.isInteger(gId)) {
+    return res.status(400).json({ error: 'roommate_id and group_id must be valid IDs.' });
+  }
 
-  db.get('SELECT id FROM group_memberships WHERE roommate_id = ? AND group_id = ?', [rId, gId], (err, row) => {
+  db.get('SELECT id FROM roommates WHERE id = ?', [rId], (err, roommate) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (row) {
-      return res.json({ message: 'Already a member of this group.' });
-    }
+    if (!roommate) return res.status(404).json({ error: 'Roommate was not found.' });
 
-    db.run(`
-      INSERT INTO group_memberships (group_id, roommate_id, joined_at)
-      VALUES (?, ?, ?)
-    `, [gId, rId, new Date().toISOString().split('T')[0]], (err) => {
+    db.get('SELECT id FROM groups WHERE id = ?', [gId], (err, group) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json({ message: 'Successfully joined group.' });
+      if (!group) return res.status(404).json({ error: 'Group was not found.' });
+
+      db.get('SELECT id FROM group_memberships WHERE roommate_id = ? AND group_id = ?', [rId, gId], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (row) return res.json({ message: 'Already a member of this group.' });
+
+        db.run(`
+          INSERT INTO group_memberships (group_id, roommate_id, joined_at)
+          VALUES (?, ?, ?)
+        `, [gId, rId, new Date().toISOString().split('T')[0]], (err) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ message: 'Successfully joined group.' });
+        });
+      });
     });
   });
 });
@@ -702,7 +740,11 @@ app.post('/api/expenses', (req, res) => {
   getGroupIdForRequest(req, res, (err, groupId) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    const finalGroupId = groupId || group_id || 1;
+    if (!groupId) {
+      return res.status(403).json({ error: 'Create or join a group before adding expenses.' });
+    }
+
+    const finalGroupId = groupId;
 
     const rate = currency.toUpperCase() === 'USD' ? 83.0 : 1.0;
     const numAmount = parseFloat(amount);

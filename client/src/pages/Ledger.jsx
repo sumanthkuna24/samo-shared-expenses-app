@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 
 export default function Ledger({ roommates, user }) {
@@ -17,13 +17,8 @@ export default function Ledger({ roommates, user }) {
     }
   }, [user, roommates]);
 
-  // Fetch ledger whenever the selected roommate changes
-  useEffect(() => {
-    if (!selectedRoommateName) return;
-    fetchLedger();
-  }, [selectedRoommateName]);
-
-  const fetchLedger = async () => {
+  const fetchLedger = useCallback(async () => {
+    if (!selectedRoommateName || !user?.roommate_id) return;
     setLoading(true);
     setError(null);
     try {
@@ -35,7 +30,12 @@ export default function Ledger({ roommates, user }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedRoommateName, user?.roommate_id]);
+
+  // Fetch ledger whenever the selected roommate changes
+  useEffect(() => {
+    fetchLedger();
+  }, [fetchLedger]);
 
 
   const toggleRowExpand = (id) => {
@@ -67,6 +67,8 @@ export default function Ledger({ roommates, user }) {
       }
     }
   });
+
+  const finalNet = totalPaid - totalShare + settlementsSent - settlementsReceived;
 
   if (!roommates || roommates.length === 0) {
     return (
@@ -253,7 +255,7 @@ export default function Ledger({ roommates, user }) {
                                 <div style={styles.detailBlock}>
                                   <span style={styles.detailLabel}>Transaction Details</span>
                                   <div style={styles.metaBox}>
-                                    <div><strong>Split Type:</strong> {item.split_type.replace(/_/g, ' ')}</div>
+                                    <div><strong>Split Type:</strong> {(item.split_type || 'repayment').replace(/_/g, ' ')}</div>
                                     <div>
                                       <strong>Original Currency Details:</strong> {item.amount} {item.currency} 
                                       {item.currency !== 'INR' && ` (Converted using rate ${rate.toFixed(2)})`}

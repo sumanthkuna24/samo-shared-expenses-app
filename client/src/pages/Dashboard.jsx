@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 
 export default function Dashboard({ balancesData, roommates, onRefresh, user, loading }) {
@@ -41,13 +41,8 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
   const [loadingFeed, setLoadingFeed] = useState(false);
 
   // Fetch recent expense feed from active roommate's ledger
-  useEffect(() => {
-    if (user?.roommate_name) {
-      fetchFeed();
-    }
-  }, [user, balancesData]);
-
-  const fetchFeed = async () => {
+  const fetchFeed = useCallback(async () => {
+    if (!user?.roommate_name) return;
     setLoadingFeed(true);
     try {
       const data = await api.getLedger(user.roommate_name, user.roommate_id);
@@ -59,7 +54,11 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
     } finally {
       setLoadingFeed(false);
     }
-  };
+  }, [user?.roommate_id, user?.roommate_name]);
+
+  useEffect(() => {
+    fetchFeed();
+  }, [fetchFeed, balancesData]);
 
 
   // Initialize splits checklists
@@ -457,7 +456,9 @@ export default function Dashboard({ balancesData, roommates, onRefresh, user, lo
                       day: dateObj.getDate().toString()
                     };
                   }
-                } catch(e) {}
+                } catch {
+                  // Keep the safe fallback for malformed imported dates.
+                }
 
                 return (
                   <div 
@@ -1395,4 +1396,3 @@ const styles = {
     fontWeight: '600',
   }
 };
-
