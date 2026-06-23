@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../services/api';
 
 export default function AnomalyResolver({ anomalies, roommates, onRefresh, user }) {
@@ -22,13 +22,7 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberJoinDate, setNewMemberJoinDate] = useState('2026-02-01');
 
-  useEffect(() => {
-    if (user?.roommate_id) {
-      fetchDecisionLogs();
-    }
-  }, [user]);
-
-  const fetchDecisionLogs = async () => {
+  const fetchDecisionLogs = useCallback(async () => {
     if (!user?.roommate_id) return;
     try {
       const logs = await api.getDecisionLog(user.roommate_id);
@@ -36,7 +30,11 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
     } catch (err) {
       console.error('Failed to load audit history:', err);
     }
-  };
+  }, [user?.roommate_id]);
+
+  useEffect(() => {
+    fetchDecisionLogs();
+  }, [fetchDecisionLogs]);
 
   // Initialize form default values when anomalies list updates
   useEffect(() => {
@@ -138,14 +136,15 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
 
     try {
       switch (anomaly.category) {
-        case 'missing_payer':
+        case 'missing_payer': {
           const payerId = payerSelections[anomaly.id];
           if (!payerId) throw new Error('Please choose a member.');
           actionType = 'assign_payer';
           details = { roommate_id: parseInt(payerId) };
           break;
+        }
 
-        case 'missing_currency':
+        case 'missing_currency': {
           const currSelect = currencySelections[anomaly.id];
           const customInput = customCurrencyInputs[anomaly.id];
           const finalCurrency = currSelect === 'custom' ? customInput.trim() : currSelect;
@@ -153,8 +152,9 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
           actionType = 'resolve_currency';
           details = { currency: finalCurrency.toUpperCase() };
           break;
+        }
 
-        case 'ambiguous_date':
+        case 'ambiguous_date': {
           const dateSelect = dateSelections[anomaly.id];
           const customDate = customDateInputs[anomaly.id];
           const finalDate = dateSelect === 'custom' ? customDate : dateSelect;
@@ -162,8 +162,9 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
           actionType = 'resolve_date';
           details = { parsed_date: finalDate };
           break;
+        }
 
-        case 'duplicate':
+        case 'duplicate': {
           actionType = 'merge_duplicate';
           const match = anomaly.description.match(/ID:\s*(\d+)/);
           const originalId = match ? parseInt(match[1]) : null;
@@ -176,15 +177,17 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
             details = { keep_expense_id: anomaly.expense_id, discard_expense_id: originalId };
           }
           break;
+        }
 
-        case 'temporal_violation':
+        case 'temporal_violation': {
           const tempRoommateId = temporalRoommateSelections[anomaly.id];
           if (!tempRoommateId) throw new Error('Please choose who to remove.');
           actionType = 'remove_roommate_split';
           details = { roommate_id: parseInt(tempRoommateId) };
           break;
+        }
 
-        case 'split_sum_error':
+        case 'split_sum_error': {
           actionType = 'adjust_splits';
           const pSplits = percentageSplits[anomaly.id] || {};
           const activeSplits = Object.keys(pSplits)
@@ -201,6 +204,7 @@ export default function AnomalyResolver({ anomalies, roommates, onRefresh, user 
           }
           details = { splits: activeSplits };
           break;
+        }
 
         case 'classification_ambiguity':
           if (classificationOverride === 'convert') {

@@ -2,7 +2,11 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../expenses.db');
+// Tests and deployments can point at an isolated database without touching the
+// checked-in demo data. Local development keeps the existing default.
+const dbPath = process.env.DATABASE_PATH
+  ? path.resolve(process.env.DATABASE_PATH)
+  : path.resolve(__dirname, '../expenses.db');
 const db = new sqlite3.Database(dbPath);
 
 // Enable foreign key constraints in SQLite
